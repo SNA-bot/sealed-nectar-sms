@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { Users, Wallet, ClipboardList, LogOut, Plus, Search, Trash2, ChevronRight, X, Check, AlertCircle, Lock, KeyRound, Printer, ArrowLeft, GraduationCap, Clock, HelpCircle, Upload, Download, Table, CreditCard } from "lucide-react";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from "recharts";
 import * as XLSX from "xlsx";
-import { getItem, setItem } from "./lib/storage";
+import { getItem, setItem, uploadPhoto } from "./lib/storage";
 
 // ---------- Storage helpers ----------
 // Backed by a real Supabase Postgres table now (see src/lib/storage.js and supabase/schema.sql)
@@ -25,28 +25,31 @@ const save = async (key, value) => {
 };
 
 const uid = () => Math.random().toString(36).slice(2, 10);
-const CLASSES = ["KG1", "KG2", "N1", "N2", "JSS1", "JSS2", "JSS3", "SS1", "SS2", "SS3"];
+const CLASSES = ["KG1", "KG2", "N1", "N2", "Basic1", "Basic2", "Basic3", "Basic4", "Basic5", "JSS1", "JSS2", "JSS3", "SS1", "SS2", "SS3"];
 const CLASS_GROUP = {
   KG1: "kg", KG2: "kg",
   N1: "nursery", N2: "nursery",
+  Basic1: "basic", Basic2: "basic", Basic3: "basic", Basic4: "basic", Basic5: "basic",
   JSS1: "jss", JSS2: "jss", JSS3: "jss",
   SS1: "ss", SS2: "ss", SS3: "ss",
 };
 const KG_SUBJECTS = ["CLL", "N/Maths", "SED", "PSED", "CHL", "CCA", "Arabic", "Song/Rhyme", "KUW", "PHD"];
 const NURSERY_SUBJECTS = ["CLL", "N/Maths", "SED", "SHD", "CHL", "Pre-Science", "Arabiyah", "Discovery", "CCA", "H/W", "Story", "Song & Rhyme"];
+const BASIC_SUBJECTS = ["English Studies", "Mathematics", "BST", "NVE", "PVS", "Literature", "IRS", "Arabiyah", "Yoruba", "Agric Science", "Home Economics", "Civic Education", "Social Studies", "CCA", "ICT", "PHE", "Quantitative Aptitude", "Verbal Aptitude"];
 const JSS_SUBJECTS = ["English Studies", "Mathematics", "BST", "CCA", "PHE", "ICT", "Social Studies", "Civic Education", "IRS", "Arabiyah", "Yoruba", "Business Studies", "Home Economics", "Agric Science"];
 const SS_CORE = ["Mathematics", "English Language", "Civic Education"];
 const TRADE_SUBJECTS = ["Electrical Installation", "Cosmetology", "Barbing & Hairdressing", "Data Processing", "Insurance", "Animal Husbandry", "Crop Husbandry", "Refrigeration"];
 const DEPARTMENTS = ["STEM", "Business", "Humanities"];
 const DEPARTMENT_SUBJECTS = {
   STEM: { prerequisite: ["Physics", "Chemistry", "Biology"], elective: ["Technical Drawing", "Economics", "Agric Science", "ICT"] },
-  Business: { prerequisite: ["Account", "Commerce"], elective: ["Economics", "Yoruba", "Further Mathematics"] },
-  Humanities: { prerequisite: ["Literature-in-English", "Yoruba", "IRS"], elective: ["Further Mathematics", "Economics"] },
+  Business: { prerequisite: ["Account", "Commerce"], elective: ["Economics", "Yoruba", "Further Mathematics", "Marketing"] },
+  Humanities: { prerequisite: ["Literature-in-English", "Yoruba", "IRS", "Government"], elective: ["Further Mathematics", "Economics", "Geography"] },
 };
 function subjectsForClass(className, department) {
   const group = CLASS_GROUP[className];
   if (group === "kg") return KG_SUBJECTS;
   if (group === "nursery") return NURSERY_SUBJECTS;
+  if (group === "basic") return BASIC_SUBJECTS;
   if (group === "jss") return JSS_SUBJECTS;
   if (group === "ss") {
     const dept = DEPARTMENT_SUBJECTS[department];
@@ -73,7 +76,8 @@ const ALL_SUBJECTS = [...new Set([
 ])];
 const TERMS = ["1st Term", "2nd Term", "3rd Term"];
 const NEXT_CLASS = {
-  KG1: "KG2", KG2: "N1", N1: "N2", N2: "JSS1",
+  KG1: "KG2", KG2: "N1", N1: "N2", N2: "Basic1",
+  Basic1: "Basic2", Basic2: "Basic3", Basic3: "Basic4", Basic4: "Basic5", Basic5: "JSS1",
   JSS1: "JSS2", JSS2: "JSS3", JSS3: "SS1",
   SS1: "SS2", SS2: "SS3", SS3: "Graduated",
 };
@@ -135,7 +139,9 @@ async function hashCode(text) {
 }
 
 // Resizes and compresses an uploaded image client-side so photos/signatures stay small in storage.
-function fileToCompressedDataUrl(file, maxSize = 300, quality = 0.75) {
+// Resizes an uploaded image client-side and returns a compressed JPEG Blob, ready to
+// upload to Supabase Storage (keeps photos small and fast to load).
+function compressImageToBlob(file, maxSize = 300, quality = 0.75) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -147,7 +153,7 @@ function fileToCompressedDataUrl(file, maxSize = 300, quality = 0.75) {
         const canvas = document.createElement("canvas");
         canvas.width = w; canvas.height = h;
         canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL("image/jpeg", quality));
+        canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Compression failed"))), "image/jpeg", quality);
       };
       img.onerror = reject;
       img.src = e.target.result;
@@ -159,20 +165,24 @@ function fileToCompressedDataUrl(file, maxSize = 300, quality = 0.75) {
 
 function PhotoUpload({ value, onChange, label, maxSize = 300, shape = "circle" }) {
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setBusy(true);
+    setError("");
     try {
-      const dataUrl = await fileToCompressedDataUrl(file, maxSize, 0.75);
-      onChange(dataUrl);
+      const blob = await compressImageToBlob(file, maxSize, 0.75);
+      const url = await uploadPhoto(blob);
+      if (url) onChange(url);
+      else setError("Upload failed — try again.");
     } catch {
-      // ignore silently — user can retry
+      setError("Couldn't process that image — try again.");
     }
     setBusy(false);
   };
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex items-center gap-3 flex-wrap">
       {value ? (
         <img src={value} alt={label} className={`w-14 h-14 object-cover border border-[#EFE9DA] ${shape === "circle" ? "rounded-full" : "rounded-md bg-white"}`} />
       ) : (
@@ -183,6 +193,7 @@ function PhotoUpload({ value, onChange, label, maxSize = 300, shape = "circle" }
         <input type="file" accept="image/*" onChange={handleFile} className="hidden" disabled={busy} />
       </label>
       {value && <button type="button" onClick={() => onChange("")} className="text-xs text-[#B0532B] hover:underline">Remove</button>}
+      {error && <p className="w-full text-[10px] text-[#B0532B]">{error}</p>}
     </div>
   );
 }
