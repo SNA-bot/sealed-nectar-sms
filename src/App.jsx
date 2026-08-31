@@ -5,9 +5,6 @@ import * as XLSX from "xlsx";
 import { getItem, setItem, uploadPhoto } from "./lib/storage";
 
 // ---------- Storage helpers ----------
-// Backed by a real Supabase Postgres table now (see src/lib/storage.js and supabase/schema.sql)
-// instead of Claude's artifact-only window.storage. Every other component in this file calls
-// load()/save() exactly as before, so nothing else needed to change.
 const load = async (key, fallback) => {
   try {
     const value = await getItem(key);
@@ -57,8 +54,6 @@ function subjectsForClass(className, department) {
   }
   return [];
 }
-// Same as subjectsForClass, but for SS students uses their individually chosen electives
-// (falling back to the full elective pool for students who haven't picked any yet).
 function subjectsForStudent(student) {
   const group = CLASS_GROUP[student.className];
   if (group !== "ss") return subjectsForClass(student.className, student.department);
@@ -92,8 +87,6 @@ function gradeFor(score) {
   return { grade: "F", remark: "Fail" };
 }
 
-// CBT component (max 20) is derived from CBT exam attempts rather than stored on the result,
-// so it always reflects the latest auto-graded exam score.
 function getCbtScore(studentId, subject, term, exams, examAttempts) {
   const examIds = exams.filter((e) => e.subject === subject && e.term === term).map((e) => e.id);
   if (examIds.length === 0) return null;
@@ -107,7 +100,6 @@ function resultTotal(result, cbt) {
   return ca + (cbt || 0) + theory;
 }
 
-// Average of a student's subject totals across all three terms, used for end-of-year promotion decisions.
 function annualAverage(studentId, subjects, results, exams, examAttempts) {
   const perSubject = subjects.map((subj) => {
     const perTerm = TERMS.map((t) => {
@@ -121,8 +113,6 @@ function annualAverage(studentId, subjects, results, exams, examAttempts) {
   return perSubject.length ? perSubject.reduce((a, b) => a + b, 0) / perSubject.length : null;
 }
 
-// Running account ledger helpers — a single continuous charge/payment history per student,
-// so installments and balances carry correctly across terms (and beyond, if needed).
 function ledgerFor(studentId, feeLedger) {
   return feeLedger.filter((e) => e.studentId === studentId).sort((a, b) => (a.date || "").localeCompare(b.date || ""));
 }
@@ -138,9 +128,6 @@ async function hashCode(text) {
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-// Resizes and compresses an uploaded image client-side so photos/signatures stay small in storage.
-// Resizes an uploaded image client-side and returns a compressed JPEG Blob, ready to
-// upload to Supabase Storage (keeps photos small and fast to load).
 function compressImageToBlob(file, maxSize = 300, quality = 0.75) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -198,7 +185,6 @@ function PhotoUpload({ value, onChange, label, maxSize = 300, shape = "circle" }
   );
 }
 
-// ---------- Decorative eight-point star (school signature motif) ----------
 function Rosette({ size = 20, className = "" }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" className={className} fill="currentColor">
@@ -221,8 +207,8 @@ const inputCls = "border border-[#EFE9DA] rounded-md px-3 py-2 text-sm focus:out
 // ---------- Root ----------
 export default function App() {
   const [loading, setLoading] = useState(true);
-  const [role, setRole] = useState(null); // 'admin' | 'teacher' | 'parent'
-  const [session, setSession] = useState(null); // {type:'admin'} or {type:'teacher', teacherId}
+  const [role, setRole] = useState(null);
+  const [session, setSession] = useState(null);
   const [students, setStudents] = useState([]);
   const [teachers, setTeachers] = useState([]);
   const [attendance, setAttendance] = useState([]);
@@ -239,11 +225,11 @@ export default function App() {
   const [feeLedger, setFeeLedger] = useState([]);
   const [newsPosts, setNewsPosts] = useState([]);
   const [galleryPhotos, setGalleryPhotos] = useState([]);
-  const [adminAuth, setAdminAuth] = useState(undefined); // undefined = loading, null = not set, {hash} = set
-  const [reportCard, setReportCard] = useState(null); // {studentId, term} or null
-  const [broadsheet, setBroadsheet] = useState(null); // {className, department, term} or null
-  const [idCardView, setIdCardView] = useState(null); // {type: 'student'|'teacher', ids: []} or null
-  const [billView, setBillView] = useState(null); // {studentId, term} or null
+  const [adminAuth, setAdminAuth] = useState(undefined);
+  const [reportCard, setReportCard] = useState(null);
+  const [broadsheet, setBroadsheet] = useState(null);
+  const [idCardView, setIdCardView] = useState(null);
+  const [billView, setBillView] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -259,7 +245,6 @@ export default function App() {
       setExams(ex); setExamAttempts(ea); setTheoryExams(te); setQuestionBank(qb);
       setSchoolSettings(ss); setFeeStructures(fs); setNotes(nt); setLiveClasses(lc);
       setNewsPosts(np); setGalleryPhotos(gp);
-      // One-time migration: turn old per-term due/paid fee records into ledger charge+payment entries.
       if (fl.length === 0 && f.length > 0) {
         const migrated = [];
         f.forEach((rec) => {
@@ -801,6 +786,7 @@ function StudentsPanel({ students, setStudents }) {
   const [query, setQuery] = useState("");
   const [resetId, setResetId] = useState(null);
   const [newPin, setNewPin] = useState("");
+  const [pinError, setPinError] = useState("");
   const isSS = CLASS_GROUP[form.className] === "ss";
   const electivePool = isSS && DEPARTMENT_SUBJECTS[form.department] ? DEPARTMENT_SUBJECTS[form.department].elective : [];
 
@@ -829,7 +815,11 @@ function StudentsPanel({ students, setStudents }) {
   };
   const removeStudent = (id) => setStudents(students.filter((s) => s.id !== id));
   const resetPin = async (id) => {
-    if (!/^\d{4,6}$/.test(newPin)) return;
+    if (!/^\d{4,6}$/.test(newPin)) {
+      setPinError("PIN must be 4 to 6 digits (numbers only).");
+      return;
+    }
+    setPinError("");
     const pinHash = await hashCode(newPin);
     setStudents(students.map((s) => s.id === id ? { ...s, pinHash } : s));
     setResetId(null); setNewPin("");
@@ -887,50 +877,64 @@ function StudentsPanel({ students, setStudents }) {
         <input placeholder="Search by name or admission no." value={query} onChange={(e) => setQuery(e.target.value)} className={`w-full pl-9 ${inputCls}`} />
       </div>
       {filtered.length === 0 ? <EmptyState text="No students yet. Add your first student above." /> : (
-        <div className="bg-white border border-[#EFE9DA] rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-[#F5F1E6] text-[#6E8F80] text-xs uppercase tracking-wide">
-                <th className="text-left px-4 py-2.5">Name</th><th className="text-left px-4 py-2.5">Adm. No.</th>
-                <th className="text-left px-4 py-2.5">Class</th><th className="text-left px-4 py-2.5">Parent</th>
-                <th className="text-left px-4 py-2.5">Login PIN</th><th className="px-4 py-2.5"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((s) => (
-                <tr key={s.id} className="border-t border-[#EFE9DA]">
-                  <td className="px-4 py-2.5">{s.name}</td>
-                  <td className="px-4 py-2.5 text-[#6E8F80]">{s.admissionNo}</td>
-                  <td className="px-4 py-2.5">{s.className}{s.department ? ` · ${s.department}` : ""}</td>
-                  <td className="px-4 py-2.5 text-[#6E8F80]">{s.parentName || "—"}</td>
-                  <td className="px-4 py-2.5">
-                    {resetId === s.id ? (
-                      <div className="flex gap-1">
-                        <input placeholder="New PIN" inputMode="numeric" value={newPin} onChange={(e) => setNewPin(e.target.value)} className="w-20 border border-[#EFE9DA] rounded-md px-2 py-1 text-xs focus:outline-none focus:border-[#C9A227]" />
-                        <button onClick={() => resetPin(s.id)} className="text-xs bg-[#0B4F3C] text-white px-2 rounded-md">Save</button>
-                      </div>
-                    ) : (
-                      <button onClick={() => setResetId(s.id)} className="text-xs text-[#6E8F80] hover:text-[#0B4F3C] flex items-center gap-1">
-                        <KeyRound size={11} /> {s.pinHash ? "Reset PIN" : "Set PIN"}
-                      </button>
-                    )}
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <button onClick={() => startEdit(s)} className="text-xs text-[#0B4F3C] hover:underline">Edit</button>
-                      <button onClick={() => removeStudent(s.id)} className="text-[#B0532B] hover:text-[#8a3f21]"><Trash2 size={14} /></button>
-                    </div>
-                  </td>
+        <>
+          <p className="text-[10px] text-[#6E8F80] mb-1.5 sm:hidden">Swipe left/right on the table below to see all columns, including Login PIN.</p>
+          <div className="bg-white border border-[#EFE9DA] rounded-lg overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-[#F5F1E6] text-[#6E8F80] text-xs uppercase tracking-wide">
+                  <th className="text-left px-4 py-2.5">Name</th><th className="text-left px-4 py-2.5">Adm. No.</th>
+                  <th className="text-left px-4 py-2.5">Class</th><th className="text-left px-4 py-2.5">Parent</th>
+                  <th className="text-left px-4 py-2.5">Login PIN</th><th className="px-4 py-2.5"></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {filtered.map((s) => (
+                  <tr key={s.id} className="border-t border-[#EFE9DA]">
+                    <td className="px-4 py-2.5 whitespace-nowrap">{s.name}</td>
+                    <td className="px-4 py-2.5 text-[#6E8F80] whitespace-nowrap">{s.admissionNo}</td>
+                    <td className="px-4 py-2.5 whitespace-nowrap">{s.className}{s.department ? ` · ${s.department}` : ""}</td>
+                    <td className="px-4 py-2.5 text-[#6E8F80] whitespace-nowrap">{s.parentName || "—"}</td>
+                    <td className="px-4 py-2.5">
+                      {resetId === s.id ? (
+                        <div>
+                          <div className="flex gap-1 items-center">
+                            <input
+                              placeholder="New PIN"
+                              inputMode="numeric"
+                              value={newPin}
+                              onChange={(e) => { setNewPin(e.target.value); setPinError(""); }}
+                              onKeyDown={(e) => e.key === "Enter" && resetPin(s.id)}
+                              autoFocus
+                              className="w-20 border border-[#EFE9DA] rounded-md px-2 py-1 text-xs focus:outline-none focus:border-[#C9A227]"
+                            />
+                            <button onClick={() => resetPin(s.id)} className="text-xs bg-[#0B4F3C] text-white px-2 py-1 rounded-md whitespace-nowrap">Save</button>
+                            <button onClick={() => { setResetId(null); setNewPin(""); setPinError(""); }} className="text-xs text-[#6E8F80] px-1">Cancel</button>
+                          </div>
+                          {pinError && <p className="text-[10px] text-[#B0532B] mt-1 w-32">{pinError}</p>}
+                        </div>
+                      ) : (
+                        <button onClick={() => { setResetId(s.id); setNewPin(""); setPinError(""); }} className="text-xs text-[#6E8F80] hover:text-[#0B4F3C] flex items-center gap-1 whitespace-nowrap">
+                          <KeyRound size={11} /> {s.pinHash ? "Reset PIN" : "Set PIN"}
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <button onClick={() => startEdit(s)} className="text-xs text-[#0B4F3C] hover:underline whitespace-nowrap">Edit</button>
+                        <button onClick={() => removeStudent(s.id)} className="text-[#B0532B] hover:text-[#8a3f21]"><Trash2 size={14} /></button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </Section>
   );
 }
-
 function normalizeHeader(s) {
   return String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 }
@@ -1361,8 +1365,7 @@ function WebsiteContentPanel({ newsPosts, setNewsPosts, galleryPhotos, setGaller
       )}
     </Section>
   );
-}
-
+      }
 function FeesPanel({ students, feeLedger, setFeeLedger, feeStructures }) {
   const [studentId, setStudentId] = useState("");
   const [issueTerm, setIssueTerm] = useState(TERMS[0]);
@@ -1489,7 +1492,7 @@ function ReportCardsPanel({ students, onOpenReportCard, onOpenBill }) {
         <button
           disabled={!studentId}
           onClick={() => onOpenBill(studentId, term)}
-          className="w-full flex items-center justify-center gap-2 bg-[#C9A227] text-[#0B4F3C] font-medium text-sm rounded-md py-2.5 hover:brightness-95 transition-all disabled:opacity-50">
+          className="w-full flex items-center justify-center gap-2 bg-[#C9A227] text-[#0B4F3C] font-medium rounded-md py-2.5 hover:brightness-95 transition-all disabled:opacity-50">
           <Printer size={14} /> Generate school bill
         </button>
       </div>
@@ -1764,7 +1767,6 @@ function SettingsPanel({ adminAuth, setAdminAuth, schoolSettings, setSchoolSetti
     </Section>
   );
 }
-
 // ================= TEACHER =================
 function TeacherView({ teacher, students, attendance, setAttendance, results, setResults, exams, setExams, examAttempts, theoryExams, setTheoryExams, questionBank, setQuestionBank, notes, setNotes, liveClasses, setLiveClasses }) {
   const [tab, setTab] = useState("attendance");
@@ -2070,9 +2072,6 @@ function CbtExamsTab({ teacher, students, exams, setExams, examAttempts, questio
 
 // ================= AI THEORY MARKING =================
 async function callClaude(prompt) {
-  // Calls our own Supabase Edge Function (supabase/functions/grade-theory), which holds the
-  // real Anthropic API key server-side and forwards the request. The API key must never be
-  // placed directly in this frontend code — anyone could read it from the browser and use it.
   const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/grade-theory`, {
     method: "POST",
     headers: {
@@ -2256,8 +2255,7 @@ function TheoryGradingView({ exam, students, results, setResults, onBack }) {
       )}
     </Section>
   );
-}
-
+                                                                                            }
 // ================= E-NOTES =================
 const emptyNoteForm = (teacher) => ({ title: "", subject: teacher?.subjects?.[0] || "", className: teacher?.classes?.[0] || "", term: TERMS[0], content: "" });
 
@@ -2710,8 +2708,7 @@ function ReportCardPrint({ student, term, results, attendance, feeLedger, exams,
       </div>
     </div>
   );
-}
-
+                                                                                          }
 // ================= STUDENT =================
 function StudentView({ student, exams, examAttempts, setExamAttempts, notes, liveClasses }) {
   const [activeExamId, setActiveExamId] = useState(null);
@@ -3252,4 +3249,4 @@ function IdCardPrint({ type, items, schoolSettings, onBack }) {
       <p className="no-print max-w-3xl mx-auto text-center text-xs text-[#6E8F80] mt-4">Front (left) and back (right) print together — laminate both sides per card.</p>
     </div>
   );
-}
+                                                                        }
