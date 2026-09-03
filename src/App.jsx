@@ -629,6 +629,321 @@ function StudentGate({ students, onSuccess }) {
     </AuthCard>
   );
 }
+// ================= ADMIN =================
+function AdminView({ students, setStudents, teachers, setTeachers, feeLedger, setFeeLedger, feeStructures, setFeeStructures, results, attendance, exams, examAttempts, adminAuth, setAdminAuth, schoolSettings, setSchoolSettings, newsPosts, setNewsPosts, galleryPhotos, setGalleryPhotos, onOpenReportCard, onOpenBroadsheet, onOpenIdCards, onOpenBill }) {
+  const [tab, setTab] = useState("overview");
+  const tabs = [
+    { key: "overview", label: "Overview" }, { key: "students", label: "Students" }, { key: "bulkimport", label: "Bulk Import" },
+    { key: "teachers", label: "Staff" }, { key: "fees", label: "Accounts" },
+    { key: "reportcards", label: "Report Cards" }, { key: "broadsheet", label: "Broadsheet" },
+    { key: "promotion", label: "Promotion" }, { key: "idcards", label: "ID Cards" },
+    { key: "feestructure", label: "Fee Structure" }, { key: "website", label: "Website" }, { key: "settings", label: "Settings" },
+  ];
+  return (
+    <div className="max-w-5xl mx-auto px-4 py-5">
+      <div className="flex gap-1 mb-6 bg-[#EFE9DA] p-1 rounded-lg w-fit overflow-x-auto max-w-full">
+        {tabs.map((t) => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            className={`px-4 py-2 text-sm rounded-md whitespace-nowrap transition-colors ${tab === t.key ? "bg-[#0B4F3C] text-[#FBF8F1]" : "text-[#6E8F80] hover:text-[#0B4F3C]"}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {tab === "overview" && <AdminOverview students={students} teachers={teachers} feeLedger={feeLedger} results={results} attendance={attendance} exams={exams} examAttempts={examAttempts} />}
+      {tab === "students" && <StudentsPanel students={students} setStudents={setStudents} />}
+      {tab === "bulkimport" && <BulkImportPanel students={students} setStudents={setStudents} />}
+      {tab === "teachers" && <TeachersPanel teachers={teachers} setTeachers={setTeachers} />}
+      {tab === "fees" && <FeesPanel students={students} feeLedger={feeLedger} setFeeLedger={setFeeLedger} feeStructures={feeStructures} />}
+      {tab === "reportcards" && <ReportCardsPanel students={students} onOpenReportCard={onOpenReportCard} onOpenBill={onOpenBill} />}
+      {tab === "broadsheet" && <BroadsheetFormPanel onOpenBroadsheet={onOpenBroadsheet} />}
+      {tab === "promotion" && <PromotionPanel students={students} setStudents={setStudents} results={results} exams={exams} examAttempts={examAttempts} />}
+      {tab === "idcards" && <IdCardsPanel students={students} teachers={teachers} onOpenIdCards={onOpenIdCards} />}
+      {tab === "feestructure" && <FeeStructurePanel feeStructures={feeStructures} setFeeStructures={setFeeStructures} />}
+      {tab === "website" && <WebsiteContentPanel newsPosts={newsPosts} setNewsPosts={setNewsPosts} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} />}
+      {tab === "settings" && <SettingsPanel adminAuth={adminAuth} setAdminAuth={setAdminAuth} schoolSettings={schoolSettings} setSchoolSettings={setSchoolSettings} />}
+    </div>
+  );
+}
+
+function StatCard({ label, value, sub }) {
+  return (
+    <div className="bg-white border border-[#EFE9DA] rounded-lg p-4">
+      <div className="text-2xl font-serif text-[#0B4F3C]">{value}</div>
+      <div className="text-xs text-[#6E8F80] mt-1">{label}</div>
+      {sub && <div className="text-[11px] text-[#C9A227] mt-1">{sub}</div>}
+    </div>
+  );
+}
+
+function AdminOverview({ students, teachers, feeLedger, results, attendance, exams, examAttempts }) {
+  const [perfTerm, setPerfTerm] = useState(TERMS[0]);
+  const ledgerAll = ledgerTotals(feeLedger);
+  const totalPaid = ledgerAll.paid;
+  const outstanding = Math.max(ledgerAll.balance, 0);
+
+  const enrollmentData = CLASSES.map((c) => ({ name: c, students: students.filter((s) => s.className === c).length })).filter((d) => d.students > 0);
+
+  const feeData = (totalPaid > 0 || outstanding > 0) ? [
+    { name: "Collected", value: totalPaid },
+    { name: "Outstanding", value: outstanding },
+  ] : [];
+  const FEE_COLORS = ["#0B4F3C", "#B0532B"];
+
+  const attendanceData = CLASSES.map((c) => {
+    const classStudentIds = students.filter((s) => s.className === c).map((s) => s.id);
+    const records = attendance.filter((a) => classStudentIds.includes(a.studentId));
+    const present = records.filter((a) => a.status === "Present").length;
+    return { name: c, rate: records.length ? Math.round((present / records.length) * 100) : 0, hasData: records.length > 0 };
+  }).filter((d) => d.hasData);
+
+  const subjectsWithData = [...new Set(results.filter((r) => r.term === perfTerm).map((r) => r.subject))];
+  const performanceData = subjectsWithData.map((subj) => {
+    const rows = results.filter((r) => r.term === perfTerm && r.subject === subj);
+    const totals = rows.map((r) => resultTotal(r, getCbtScore(r.studentId, subj, perfTerm, exams, examAttempts)));
+    return { name: subj, average: Math.round((totals.reduce((a, b) => a + b, 0) / totals.length) * 10) / 10 };
+  });
+
+  return (
+    <div>
+      <Section title="At a glance">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <StatCard label="Students" value={students.length} />
+          <StatCard label="Teachers" value={teachers.length} />
+          <StatCard label="Fees collected" value={`₦${totalPaid.toLocaleString()}`} />
+          <StatCard label="Outstanding" value={`₦${outstanding.toLocaleString()}`} sub={outstanding > 0 ? "Follow up needed" : "All clear"} />
+        </div>
+      </Section>
+
+      <div className="grid md:grid-cols-2 gap-4">
+        <Section title="Enrollment by class">
+          {enrollmentData.length === 0 ? <EmptyState text="No students added yet." /> : (
+            <div className="bg-white border border-[#EFE9DA] rounded-lg p-4" style={{ height: 240 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={enrollmentData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#EFE9DA" />
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#6E8F80" }} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "#6E8F80" }} />
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, borderColor: "#EFE9DA" }} />
+                  <Bar dataKey="students" fill="#C9A227" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </Section>
+
+        <Section title="Fee collection">
+          {feeData.length === 0 ? <EmptyState text="No fee records yet." /> : (
+            <div className="bg-white border border-[#EFE9DA] rounded-lg p-4" style={{ height: 240 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={feeData} dataKey="value" nameKey="name" innerRadius={55} outerRadius={80} paddingAngle={2}>
+                    {feeData.map((entry, i) => <Cell key={entry.name} fill={FEE_COLORS[i]} />)}
+                  </Pie>
+                  <Tooltip formatter={(v) => `₦${Number(v).toLocaleString()}`} contentStyle={{ fontSize: 12, borderRadius: 8, borderColor: "#EFE9DA" }} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </Section>
+
+        <Section title="Attendance rate by class">
+          {attendanceData.length === 0 ? <EmptyState text="No attendance recorded yet." /> : (
+            <div className="bg-white border border-[#EFE9DA] rounded-lg p-4" style={{ height: 240 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={attendanceData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#EFE9DA" />
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#6E8F80" }} />
+                  <YAxis unit="%" domain={[0, 100]} tick={{ fontSize: 11, fill: "#6E8F80" }} />
+                  <Tooltip formatter={(v) => `${v}%`} contentStyle={{ fontSize: 12, borderRadius: 8, borderColor: "#EFE9DA" }} />
+                  <Bar dataKey="rate" fill="#0B4F3C" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </Section>
+
+        <Section title="Subject performance" action={
+          <select value={perfTerm} onChange={(e) => setPerfTerm(e.target.value)} className="text-xs border border-[#EFE9DA] rounded-md px-2 py-1 bg-white focus:outline-none focus:border-[#C9A227]">
+            {TERMS.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        }>
+          {performanceData.length === 0 ? <EmptyState text={`No results entered for ${perfTerm} yet.`} /> : (
+            <div className="bg-white border border-[#EFE9DA] rounded-lg p-4" style={{ height: 240 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={performanceData} layout="vertical" margin={{ left: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#EFE9DA" />
+                  <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11, fill: "#6E8F80" }} />
+                  <YAxis type="category" dataKey="name" width={90} tick={{ fontSize: 10, fill: "#6E8F80" }} />
+                  <Tooltip formatter={(v) => `${v}/100`} contentStyle={{ fontSize: 12, borderRadius: 8, borderColor: "#EFE9DA" }} />
+                  <Bar dataKey="average" fill="#C9A227" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </Section>
+      </div>
+    </div>
+  );
+}
+
+function StudentsPanel({ students, setStudents }) {
+  const emptyForm = { name: "", admissionNo: "", className: CLASSES[0], department: "", tradeSubject: "", electives: [], parentName: "", parentPhone: "", photo: "" };
+  const [form, setForm] = useState(emptyForm);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [query, setQuery] = useState("");
+  const [resetId, setResetId] = useState(null);
+  const [newPin, setNewPin] = useState("");
+  const [pinError, setPinError] = useState("");
+  const isSS = CLASS_GROUP[form.className] === "ss";
+  const electivePool = isSS && DEPARTMENT_SUBJECTS[form.department] ? DEPARTMENT_SUBJECTS[form.department].elective : [];
+
+  const startAdd = () => { setForm(emptyForm); setEditingId(null); setShowForm(true); };
+  const startEdit = (s) => {
+    setForm({
+      name: s.name, admissionNo: s.admissionNo, className: s.className,
+      department: s.department || "", tradeSubject: s.tradeSubject || "",
+      electives: s.electives || [], parentName: s.parentName || "", parentPhone: s.parentPhone || "", photo: s.photo || "",
+    });
+    setEditingId(s.id);
+    setShowForm(true);
+  };
+  const toggleElective = (subj) => setForm((f) => ({ ...f, electives: f.electives.includes(subj) ? f.electives.filter((e) => e !== subj) : [...f.electives, subj] }));
+
+  const saveStudent = () => {
+    if (!form.name.trim() || !form.admissionNo.trim()) return;
+    if (editingId) {
+      setStudents(students.map((s) => s.id === editingId ? { ...s, ...form } : s));
+    } else {
+      setStudents([...students, { id: uid(), ...form }]);
+    }
+    setForm(emptyForm);
+    setEditingId(null);
+    setShowForm(false);
+  };
+  const removeStudent = (id) => setStudents(students.filter((s) => s.id !== id));
+  const resetPin = async (id) => {
+    if (!/^\d{4,6}$/.test(newPin)) {
+      setPinError("PIN must be 4 to 6 digits (numbers only).");
+      return;
+    }
+    setPinError("");
+    const pinHash = await hashCode(newPin);
+    setStudents(students.map((s) => s.id === id ? { ...s, pinHash } : s));
+    setResetId(null); setNewPin("");
+  };
+  const filtered = students.filter((s) => s.name.toLowerCase().includes(query.toLowerCase()) || s.admissionNo.toLowerCase().includes(query.toLowerCase()));
+
+  return (
+    <Section title="Students" action={
+      <button onClick={() => showForm && !editingId ? setShowForm(false) : startAdd()} className="flex items-center gap-1.5 bg-[#0B4F3C] text-[#FBF8F1] text-sm px-3 py-1.5 rounded-md hover:bg-[#136B50] transition-colors">
+        <Plus size={14} /> Add student
+      </button>
+    }>
+      {showForm && (
+        <div className="bg-white border border-[#EFE9DA] rounded-lg p-4 mb-4 space-y-3">
+          {editingId && <p className="text-xs text-[#C9A227] font-medium">Editing {form.name || "student"}</p>}
+          <PhotoUpload value={form.photo} onChange={(v) => setForm({ ...form, photo: v })} label="Photo" />
+          <div className="grid sm:grid-cols-2 gap-3">
+            <input placeholder="Full name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={inputCls} />
+            <input placeholder="Admission number" value={form.admissionNo} onChange={(e) => setForm({ ...form, admissionNo: e.target.value })} className={inputCls} />
+            <select value={form.className} onChange={(e) => setForm({ ...form, className: e.target.value, department: "", tradeSubject: "", electives: [] })} className={inputCls}>
+              {CLASSES.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            {isSS && (
+              <select value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value, electives: [] })} className={inputCls}>
+                <option value="">Select department</option>
+                {DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+            )}
+            {isSS && (
+              <select value={form.tradeSubject} onChange={(e) => setForm({ ...form, tradeSubject: e.target.value })} className={inputCls}>
+                <option value="">Select trade subject</option>
+                {TRADE_SUBJECTS.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            )}
+            <input placeholder="Parent/guardian name" value={form.parentName} onChange={(e) => setForm({ ...form, parentName: e.target.value })} className={inputCls} />
+            <input placeholder="Parent phone" value={form.parentPhone} onChange={(e) => setForm({ ...form, parentPhone: e.target.value })} className={inputCls} />
+          </div>
+          {isSS && form.department && (
+            <div>
+              <p className="text-xs text-[#6E8F80] mb-1.5">Elective subjects for this student (choose from {form.department}'s pool)</p>
+              <div className="flex flex-wrap gap-1.5">
+                {electivePool.map((subj) => (
+                  <button type="button" key={subj} onClick={() => toggleElective(subj)}
+                    className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${form.electives.includes(subj) ? "bg-[#C9A227] text-[#0B4F3C] border-[#C9A227]" : "border-[#EFE9DA] text-[#6E8F80]"}`}>{subj}</button>
+                ))}
+              </div>
+              <p className="text-[10px] text-[#6E8F80] mt-1">Leave none selected to take all electives in the pool by default.</p>
+            </div>
+          )}
+          <button onClick={saveStudent} className="w-full bg-[#C9A227] text-[#0B4F3C] font-medium text-sm rounded-md py-2 hover:brightness-95 transition-all">{editingId ? "Save changes" : "Save student"}</button>
+        </div>
+      )}
+      <div className="relative mb-3">
+        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6E8F80]" />
+        <input placeholder="Search by name or admission no." value={query} onChange={(e) => setQuery(e.target.value)} className={`w-full pl-9 ${inputCls}`} />
+      </div>
+      {filtered.length === 0 ? <EmptyState text="No students yet. Add your first student above." /> : (
+        <>
+          <p className="text-[10px] text-[#6E8F80] mb-1.5 sm:hidden">Swipe left/right on the table below to see all columns, including Login PIN.</p>
+          <div className="bg-white border border-[#EFE9DA] rounded-lg overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-[#F5F1E6] text-[#6E8F80] text-xs uppercase tracking-wide">
+                  <th className="text-left px-4 py-2.5">Name</th><th className="text-left px-4 py-2.5">Adm. No.</th>
+                  <th className="text-left px-4 py-2.5">Class</th><th className="text-left px-4 py-2.5">Parent</th>
+                  <th className="text-left px-4 py-2.5">Login PIN</th><th className="px-4 py-2.5"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((s) => (
+                  <tr key={s.id} className="border-t border-[#EFE9DA]">
+                    <td className="px-4 py-2.5 whitespace-nowrap">{s.name}</td>
+                    <td className="px-4 py-2.5 text-[#6E8F80] whitespace-nowrap">{s.admissionNo}</td>
+                    <td className="px-4 py-2.5 whitespace-nowrap">{s.className}{s.department ? ` · ${s.department}` : ""}</td>
+                    <td className="px-4 py-2.5 text-[#6E8F80] whitespace-nowrap">{s.parentName || "—"}</td>
+                    <td className="px-4 py-2.5">
+                      {resetId === s.id ? (
+                        <div>
+                          <div className="flex gap-1 items-center">
+                            <input
+                              placeholder="New PIN"
+                              inputMode="numeric"
+                              value={newPin}
+                              onChange={(e) => { setNewPin(e.target.value); setPinError(""); }}
+                              onKeyDown={(e) => e.key === "Enter" && resetPin(s.id)}
+                              autoFocus
+                              className="w-20 border border-[#EFE9DA] rounded-md px-2 py-1 text-xs focus:outline-none focus:border-[#C9A227]"
+                            />
+                            <button onClick={() => resetPin(s.id)} className="text-xs bg-[#0B4F3C] text-white px-2 py-1 rounded-md whitespace-nowrap">Save</button>
+                            <button onClick={() => { setResetId(null); setNewPin(""); setPinError(""); }} className="text-xs text-[#6E8F80] px-1">Cancel</button>
+                          </div>
+                          {pinError && <p className="text-[10px] text-[#B0532B] mt-1 w-32">{pinError}</p>}
+                        </div>
+                      ) : (
+                        <button onClick={() => { setResetId(s.id); setNewPin(""); setPinError(""); }} className="text-xs text-[#6E8F80] hover:text-[#0B4F3C] flex items-center gap-1 whitespace-nowrap">
+                          <KeyRound size={11} /> {s.pinHash ? "Reset PIN" : "Set PIN"}
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <button onClick={() => startEdit(s)} className="text-xs text-[#0B4F3C] hover:underline whitespace-nowrap">Edit</button>
+                        <button onClick={() => removeStudent(s.id)} className="text-[#B0532B] hover:text-[#8a3f21]"><Trash2 size={14} /></button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </Section>
+  );
+      }
 function normalizeHeader(s) {
   return String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 }
@@ -1059,7 +1374,7 @@ function WebsiteContentPanel({ newsPosts, setNewsPosts, galleryPhotos, setGaller
       )}
     </Section>
   );
-                                                           }
+      }
 function FeesPanel({ students, feeLedger, setFeeLedger, feeStructures }) {
   const [studentId, setStudentId] = useState("");
   const [issueTerm, setIssueTerm] = useState(TERMS[0]);
@@ -2413,7 +2728,7 @@ function ReportCardPrint({ student, term, results, attendance, feeLedger, exams,
       </div>
     </div>
   );
-  }
+    }
 // ================= STUDENT =================
 function StudentView({ student, exams, examAttempts, setExamAttempts, notes, liveClasses }) {
   const [activeExamId, setActiveExamId] = useState(null);
@@ -2954,4 +3269,4 @@ function IdCardPrint({ type, items, schoolSettings, onBack }) {
       <p className="no-print max-w-3xl mx-auto text-center text-xs text-[#6E8F80] mt-4">Front (left) and back (right) print together — laminate both sides per card.</p>
     </div>
   );
-    }
+                                                    }
