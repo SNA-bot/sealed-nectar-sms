@@ -2106,13 +2106,13 @@ async function callClaudeOld(prompt) {
   return data.text || "";
 }
 
-const emptyTheoryExamForm = (teacher) => ({
+const emptyTheoryExamFormOld = (teacher) => ({
   title: "", subject: teacher?.subjects?.[0] || "", className: teacher?.classes?.[0] || "",
   term: TERMS[0], questions: "", markingScheme: "",
   maxMarks: theoryMaxFor(teacher?.classes?.[0] || ""),
 });
 
-function TheoryMarkingTab({ teacher, students, results, setResults, theoryExams, setTheoryExams }) {
+function TheoryMarkingTabOld({ teacher, students, results, setResults, theoryExams, setTheoryExams }) {
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState(emptyTheoryExamForm(teacher));
   const [generating, setGenerating] = useState(false);
@@ -2208,7 +2208,7 @@ function TheoryMarkingTab({ teacher, students, results, setResults, theoryExams,
   );
 }
 
-function TheoryGradingView({ exam, students, results, setResults, onBack }) {
+function TheoryGradingViewOld({ exam, students, results, setResults, onBack }) {
   const [scripts, setScripts] = useState({});
   const [suggestions, setSuggestions] = useState({});
   const [scores, setScores] = useState({});
@@ -2277,6 +2277,298 @@ function TheoryGradingView({ exam, students, results, setResults, onBack }) {
     </Section>
   );
       }
+// ================= AI THEORY MARKING (v2) =================
+// Secondary classes only (JSS1-SS3). Teachers can upload photos of the
+// handwritten script, or paste typed text. The AI returns a score, a short
+// note and a transcription, and the teacher confirms before anything saves.
+
+const MAX_SCRIPT_PHOTOS = 4;
+
+// Shrinks a phone photo to ~1600px so handwriting stays readable but uploads fast.
+function compressScriptPhoto(file, maxSize = 1600, quality = 0.72) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Could not read photo"));
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Could not open photo"));
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        const longest = Math.max(w, h);
+        if (longest > maxSize) {
+          const scale = maxSize / longest;
+          w = Math.round(w * scale);
+          h = Math.round(h * scale);
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        const dataUrl = canvas.toDataURL("image/jpeg", quality);
+        resolve({ mimeType: "image/jpeg", data: dataUrl.split(",")[1], preview: dataUrl });
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function callClaude(prompt, { images, asJson } = {}) {
+  const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/grade-theory`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+    },
+    body: JSON.stringify({ prompt, images, asJson }),
+  });
+  if (!response.ok) {
+    throw new Error(`AI marking request failed (${response.status})`);
+  }
+  const data = await response.json();
+  return data.text || "";
+}
+
+const secondaryClassesOf = (teacher) => (teacher?.classes || []).filter(isCbtClass);
+
+const emptyTheoryExamForm = (teacher) => {
+  const cls = secondaryClassesOf(teacher)[0] || "";
+  return {
+    title: "", subject: teacher?.subjects?.[0] || "", className: cls,
+    term: TERMS[0], questions: "", markingScheme: "",
+    maxMarks: theoryMaxFor(cls),
+  };
+};
+
+function TheoryMarkingTab({ teacher, students, results, setResults, theoryExams, setTheoryExams }) {
+  const [creating, setCreating] = useState(false);
+  const [form, setForm] = useState(emptyTheoryExamForm(teacher));
+  const [generating, setGenerating] = useState(false);
+  const [gradingExamId, setGradingExamId] = useState(null);
+
+  const secondaryClasses = secondaryClassesOf(teacher);
+  const myExams = theoryExams.filter((e) => e.teacherId === teacher.id && isCbtClass(e.className));
+
+  const generateScheme = async () => {
+    if (!form.questions.trim()) return;
+    setGenerating(true);
+    try {
+      const text = await callClaude(
+        `You are an experienced Nigerian secondary school examiner. Based on the following theory exam questions (total obtainable marks: ${form.maxMarks}), write a clear, concise marking scheme allocating marks per question or per expected key point. Keep it practical for a teacher to mark against. Do not add any preamble or headings — just the marking scheme itself.\n\nQUESTIONS:\n${form.questions}`
+      );
+      setForm((f) => ({ ...f, markingScheme: text.trim() }));
+    } catch (e) {
+      console.error(e);
+    }
+    setGenerating(false);
+  };
+
+  const saveExam = () => {
+    if (!form.title.trim() || !form.questions.trim() || !form.className) return;
+    setTheoryExams([...theoryExams, { id: uid(), teacherId: teacher.id, ...form }]);
+    setForm(emptyTheoryExamForm(teacher));
+    setCreating(false);
+  };
+  const deleteExam = (id) => setTheoryExams(theoryExams.filter((e) => e.id !== id));
+
+  if (gradingExamId) {
+    const exam = theoryExams.find((e) => e.id === gradingExamId);
+    return (
+      <TheoryGradingView
+        exam={exam}
+        students={students.filter((s) => s.className === exam.className)}
+        results={results} setResults={setResults}
+        onBack={() => setGradingExamId(null)}
+      />
+    );
+  }
+
+  if (secondaryClasses.length === 0) {
+    return (
+      <Section title="AI Theory Marking">
+        <EmptyState text="AI theory marking is for JSS1 to SS3 only. You have no secondary classes assigned." />
+      </Section>
+    );
+  }
+
+  return (
+    <Section title="AI Theory Marking" action={
+      <button onClick={() => { setCreating(!creating); setForm(emptyTheoryExamForm(teacher)); }} className="flex items-center gap-1.5 bg-[#0B4F3C] text-[#FBF8F1] text-sm px-3 py-1.5 rounded-md hover:bg-[#136B50] transition-colors">
+        <Plus size={14} /> New theory exam
+      </button>
+    }>
+      <p className="text-xs text-[#6E8F80] mb-4">Set your theory questions once, then upload photos of each student's written script (or paste typed text) to get an AI-suggested score. You always review and confirm the score before it's saved — nothing posts automatically.</p>
+      {creating && (
+        <div className="bg-white border border-[#EFE9DA] rounded-lg p-4 mb-4 space-y-3">
+          <input placeholder="Exam title (e.g. Mathematics 1st Term Theory)" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className={`w-full ${inputCls}`} />
+          <div className="grid grid-cols-2 gap-3">
+            <select value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} className={inputCls}>
+              {teacher.subjects.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <select value={form.className} onChange={(e) => setForm({ ...form, className: e.target.value, maxMarks: theoryMaxFor(e.target.value) })} className={inputCls}>
+              {secondaryClasses.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <select value={form.term} onChange={(e) => setForm({ ...form, term: e.target.value })} className={inputCls}>
+              {TERMS.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <input type="number" min="1" placeholder="Max marks" value={form.maxMarks} onChange={(e) => setForm({ ...form, maxMarks: e.target.value })} className={inputCls} />
+          </div>
+          <p className="text-[10px] text-[#6E8F80] -mt-1">Max marks is 40 for JSS and SS (CA 40 + CBT 20 + Paper 40). You can still adjust it manually if needed.</p>
+          <textarea placeholder="Paste or type the theory questions here" value={form.questions} onChange={(e) => setForm({ ...form, questions: e.target.value })} rows={4} className={`w-full ${inputCls}`} />
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-[#6E8F80]">Marking scheme (optional — used to guide the AI's grading)</p>
+            <button disabled={generating || !form.questions.trim()} onClick={generateScheme} className="text-xs text-[#0B4F3C] hover:underline disabled:opacity-50 disabled:no-underline">
+              {generating ? "Generating…" : "Generate with AI"}
+            </button>
+          </div>
+          <textarea placeholder="Leave blank to let the AI infer one from the questions, or write your own" value={form.markingScheme} onChange={(e) => setForm({ ...form, markingScheme: e.target.value })} rows={4} className={`w-full ${inputCls}`} />
+          <button disabled={!form.title.trim() || !form.questions.trim()} onClick={saveExam} className="w-full bg-[#C9A227] text-[#0B4F3C] font-medium text-sm rounded-md py-2.5 hover:brightness-95 transition-all disabled:opacity-50">Save theory exam</button>
+        </div>
+      )}
+      {myExams.length === 0 ? <EmptyState text="No theory exams set up yet." /> : (
+        <div className="space-y-2">
+          {myExams.map((e) => (
+            <div key={e.id} className="bg-white border border-[#EFE9DA] rounded-lg p-4 flex items-center justify-between">
+              <div>
+                <div className="font-medium text-sm">{e.title}</div>
+                <div className="text-xs text-[#6E8F80] mt-0.5">{e.subject} · {e.className} · {e.term} · /{e.maxMarks}</div>
+              </div>
+              <div className="flex items-center gap-3">
+                <button onClick={() => setGradingExamId(e.id)} className="text-xs text-[#0B4F3C] hover:underline">Grade scripts</button>
+                <button onClick={() => deleteExam(e.id)} className="text-[#B0532B] hover:text-[#8a3f21]"><Trash2 size={14} /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+function TheoryGradingView({ exam, students, results, setResults, onBack }) {
+  const [scripts, setScripts] = useState({});
+  const [photos, setPhotos] = useState({});
+  const [photoBusy, setPhotoBusy] = useState(null);
+  const [suggestions, setSuggestions] = useState({});
+  const [scores, setScores] = useState({});
+
+  const addPhotos = async (studentId, fileList) => {
+    const files = Array.from(fileList || []);
+    if (files.length === 0) return;
+    setPhotoBusy(studentId);
+    try {
+      const added = [];
+      for (const f of files) added.push(await compressScriptPhoto(f));
+      setPhotos((p) => ({ ...p, [studentId]: [...(p[studentId] || []), ...added].slice(0, MAX_SCRIPT_PHOTOS) }));
+    } catch (e) {
+      console.error(e);
+    }
+    setPhotoBusy(null);
+  };
+  const removePhoto = (studentId, idx) =>
+    setPhotos((p) => ({ ...p, [studentId]: (p[studentId] || []).filter((_, i) => i !== idx) }));
+
+  const gradeStudent = async (studentId) => {
+    const answer = (scripts[studentId] || "").trim();
+    const pics = photos[studentId] || [];
+    if (!answer && pics.length === 0) return;
+    setSuggestions((s) => ({ ...s, [studentId]: { grading: true } }));
+    try {
+      const hasPhotos = pics.length > 0;
+      const answerPart = hasPhotos
+        ? `The student's answers are in the attached photo(s) of their handwritten script, in page order. First read the handwriting carefully and transcribe what the student wrote. If any word or figure is unclear, write [unclear] instead of guessing.${answer ? `\n\nADDITIONAL TYPED ANSWER:\n${answer}` : ""}`
+        : `STUDENT'S ANSWER:\n${answer}`;
+      const text = await callClaude(
+        `You are grading a Nigerian secondary school student's theory exam script. Maximum obtainable marks: ${exam.maxMarks}.\n\nQUESTIONS:\n${exam.questions}\n\nMARKING SCHEME:\n${exam.markingScheme || "(none provided — use your best judgement based on the questions and typical curriculum expectations)"}\n\n${answerPart}\n\nReturn ONLY a JSON object in exactly this shape, with no markdown formatting and no extra text: {"transcription": "<what the student wrote, or an empty string if the script was typed>", "score": <number between 0 and ${exam.maxMarks}>, "feedback": "<one or two sentence justification for the score>"}`,
+        { images: pics.map(({ mimeType, data }) => ({ mimeType, data })), asJson: true }
+      );
+      const clean = text.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(clean);
+      const score = Math.max(0, Math.min(Number(exam.maxMarks), Number(parsed.score) || 0));
+      setSuggestions((s) => ({ ...s, [studentId]: { score, feedback: parsed.feedback, transcription: parsed.transcription, grading: false } }));
+      setScores((sc) => ({ ...sc, [studentId]: score }));
+    } catch (e) {
+      console.error(e);
+      setSuggestions((s) => ({ ...s, [studentId]: { error: true, grading: false } }));
+    }
+  };
+
+  const saveScore = (studentId) => {
+    const raw = Number(scores[studentId]);
+    if (Number.isNaN(raw)) return;
+    const score = Math.max(0, Math.min(Number(exam.maxMarks), raw));
+    const existing = results.find((r) => r.studentId === studentId && r.subject === exam.subject && r.term === exam.term);
+    if (existing) setResults(results.map((r) => r.id === existing.id ? { ...r, theory: score } : r));
+    else setResults([...results, { id: uid(), studentId, subject: exam.subject, term: exam.term, ca: "", theory: score }]);
+  };
+
+  return (
+    <Section title={`Grade — ${exam.title}`} action={<button onClick={onBack} className="text-xs text-[#6E8F80] hover:text-[#0B4F3C]">Back to theory exams</button>}>
+      <div className="bg-[#F5F1E6] border border-[#EFE9DA] rounded-lg p-3 mb-4 text-xs text-[#6E8F80]">
+        <p className="font-medium text-[#0B4F3C] mb-1">Questions</p>
+        <p className="whitespace-pre-wrap">{exam.questions}</p>
+      </div>
+      {students.length === 0 ? <EmptyState text={`No students recorded in ${exam.className} yet.`} /> : (
+        <div className="space-y-4">
+          {students.map((s) => {
+            const sug = suggestions[s.id];
+            const pics = photos[s.id] || [];
+            const existingResult = results.find((r) => r.studentId === s.id && r.subject === exam.subject && r.term === exam.term);
+            const savedTheory = existingResult?.theory;
+            const hasInput = pics.length > 0 || (scripts[s.id] || "").trim();
+            return (
+              <div key={s.id} className="bg-white border border-[#EFE9DA] rounded-lg p-4">
+                <p className="text-sm font-medium mb-2">{s.name}{savedTheory !== undefined && savedTheory !== "" ? <span className="text-xs text-[#0B4F3C] font-normal"> — saved: {savedTheory}/{exam.maxMarks}</span> : ""}</p>
+
+                <div className="flex items-center gap-2 flex-wrap mb-2">
+                  <label className={`text-xs border border-[#0B4F3C] text-[#0B4F3C] px-3 py-1.5 rounded-md cursor-pointer hover:bg-[#F5F1E6] ${pics.length >= MAX_SCRIPT_PHOTOS || photoBusy === s.id ? "opacity-50 pointer-events-none" : ""}`}>
+                    {photoBusy === s.id ? "Preparing photo…" : "Upload photo of script"}
+                    <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { addPhotos(s.id, e.target.files); e.target.value = ""; }} />
+                  </label>
+                  <span className="text-[10px] text-[#6E8F80]">Up to {MAX_SCRIPT_PHOTOS} photos, one page each, flat and well lit.</span>
+                </div>
+                {pics.length > 0 && (
+                  <div className="flex gap-2 flex-wrap mb-2">
+                    {pics.map((p, i) => (
+                      <div key={i} className="relative">
+                        <img src={p.preview} alt={`Page ${i + 1}`} className="h-20 w-16 object-cover rounded-md border border-[#EFE9DA]" />
+                        <button onClick={() => removePhoto(s.id, i)} className="absolute -top-1.5 -right-1.5 bg-[#B0532B] text-white rounded-full p-0.5"><X size={12} /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <textarea placeholder="Or paste or type the student's script here…" value={scripts[s.id] || ""} onChange={(e) => setScripts((sc) => ({ ...sc, [s.id]: e.target.value }))} rows={2} className={`w-full ${inputCls} mb-2`} />
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button disabled={sug?.grading || photoBusy === s.id || !hasInput} onClick={() => gradeStudent(s.id)} className="text-xs bg-[#0B4F3C] text-white px-3 py-1.5 rounded-md disabled:opacity-50">
+                    {sug?.grading ? "Grading…" : "Grade with AI"}
+                  </button>
+                  {sug && !sug.grading && !sug.error && (
+                    <>
+                      <span className="text-xs text-[#6E8F80]">Score:</span>
+                      <input type="number" min="0" max={exam.maxMarks} value={scores[s.id] ?? sug.score} onChange={(e) => setScores((sc) => ({ ...sc, [s.id]: e.target.value }))} className="w-16 border border-[#EFE9DA] rounded-md px-2 py-1 text-sm text-center focus:outline-none focus:border-[#C9A227]" />
+                      <span className="text-xs text-[#6E8F80]">/{exam.maxMarks}</span>
+                      <button onClick={() => saveScore(s.id)} className="text-xs bg-[#C9A227] text-[#0B4F3C] font-medium px-3 py-1 rounded-md hover:brightness-95 transition-all">Save score</button>
+                    </>
+                  )}
+                  {sug?.error && <span className="text-xs text-[#B0532B]">Couldn't grade that — try again{pics.length > 0 ? ", or retake the photo in better light." : "."}</span>}
+                </div>
+                {sug?.feedback && <p className="text-xs text-[#6E8F80] italic mt-2">AI note: {sug.feedback}</p>}
+                {sug?.transcription && (
+                  <details className="mt-2">
+                    <summary className="text-xs text-[#0B4F3C] cursor-pointer">Check what the AI read from the script</summary>
+                    <p className="text-xs text-[#6E8F80] mt-1 whitespace-pre-wrap">{sug.transcription}</p>
+                  </details>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Section>
+  );
+}
+
 // ================= E-NOTES =================
 const emptyNoteForm = (teacher) => ({ title: "", subject: teacher?.subjects?.[0] || "", className: teacher?.classes?.[0] || "", term: TERMS[0], content: "" });
 
