@@ -2089,7 +2089,8 @@ function CbtExamsTab({ teacher, students, exams, setExams, examAttempts, questio
 }
 
 // ================= AI THEORY MARKING =================
-async function callClaude(prompt) {
+// ================= AI THEORY MARKING =================
+async function callClaudeOld(prompt) {
   const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/grade-theory`, {
     method: "POST",
     headers: {
