@@ -1781,7 +1781,7 @@ function TeacherView({ teacher, students, attendance, setAttendance, results, se
   const [tab, setTab] = useState("attendance");
   const [className, setClassName] = useState(teacher?.classes?.[0] || "");
   const classStudents = students.filter((s) => s.className === className);
-
+const hasSecondary = (teacher?.classes || []).some(isCbtClass);
   if (!teacher) return <div className="max-w-md mx-auto px-4 py-10"><EmptyState text="Your account could not be found. Contact admin." /></div>;
   if (!teacher.classes || teacher.classes.length === 0) return <div className="max-w-md mx-auto px-4 py-10"><EmptyState text="No classes have been assigned to you yet. Ask admin to update your access." /></div>;
 
@@ -1789,7 +1789,7 @@ function TeacherView({ teacher, students, attendance, setAttendance, results, se
     <div className="max-w-4xl mx-auto px-4 py-5">
       <div className="text-sm text-[#6E8F80] mb-4">Welcome, <span className="text-[#0B4F3C] font-medium">{teacher.name}</span></div>
       <div className="flex gap-1 mb-4 bg-[#EFE9DA] p-1 rounded-lg w-fit overflow-x-auto max-w-full">
-        {[{ key: "attendance", label: "Attendance" }, { key: "results", label: "Results" }, { key: "cbt", label: "CBT Exams" }, { key: "theory", label: "Theory Marking" }, { key: "notes", label: "E-Notes" }, { key: "live", label: "Live Classes" }].map((t) => (
+        {[{ key: "attendance", label: "Attendance" }, { key: "results", label: "Results" }, { key: "cbt", label: "CBT Exams" }, { key: "theory", label: "Theory Marking" }, { key: "notes", label: "E-Notes" }, { key: "live", label: "Live Classes" }] .filter((t) => hasSecondary || (t.key !== "cbt" && t.key !== "theory")).map((t) => (
           <button key={t.key} onClick={() => setTab(t.key)} className={`px-4 py-2 text-sm rounded-md whitespace-nowrap transition-colors ${tab === t.key ? "bg-[#0B4F3C] text-[#FBF8F1]" : "text-[#6E8F80]"}`}>{t.label}</button>
         ))}
       </div>
