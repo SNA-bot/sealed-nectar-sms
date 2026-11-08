@@ -2116,6 +2116,7 @@ function CbtExamsTab({ teacher, students, exams, setExams, examAttempts, questio
             ))}
           </div>
           <button onClick={addQuestion} className="flex items-center gap-1.5 text-sm text-[#0B4F3C] hover:underline"><Plus size={13} /> Add question</button>
+          {!canSave && <p className="text-xs text-[#B0532B]">{!form.title.trim() ? "Enter the exam title." : `Question ${form.questions.findIndex((q) => !q.text.trim() || q.options.some((o) => !o.trim())) + 1} is incomplete. Fill the question and all 4 options.`}</p>}
           <button disabled={!canSave} onClick={saveExam} className="w-full bg-[#C9A227] text-[#0B4F3C] font-medium text-sm rounded-md py-2.5 hover:brightness-95 transition-all disabled:opacity-50">Save exam</button>
         </div>
       )}
